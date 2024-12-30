@@ -8,48 +8,31 @@ use pgrx::pgrx_sql_entity_graph::metadata::Returns;
 use pgrx::pgrx_sql_entity_graph::metadata::ReturnsError;
 use pgrx::pgrx_sql_entity_graph::metadata::SqlMapping;
 use pgrx::pgrx_sql_entity_graph::metadata::SqlTranslatable;
-use std::alloc::Layout;
 use std::ops::Deref;
 use std::ptr::NonNull;
-
-pub const HEADER_MAGIC: u16 = 0;
 
 #[repr(C, align(8))]
 pub struct PgvectorVectorHeader {
     varlena: u32,
     dims: u16,
-    magic: u16,
+    unused: u16,
     phantom: [f32; 0],
 }
 
 impl PgvectorVectorHeader {
-    fn varlena(size: usize) -> u32 {
-        (size << 2) as u32
-    }
-    fn layout(len: usize) -> Layout {
-        u16::try_from(len).expect("Vector is too large.");
-        let layout_alpha = Layout::new::<PgvectorVectorHeader>();
-        let layout_beta = Layout::array::<f32>(len).unwrap();
-        let layout = layout_alpha.extend(layout_beta).unwrap().0;
-        layout.pad_to_align()
-    }
-    #[allow(dead_code)]
-    pub fn dims(&self) -> u32 {
-        self.dims as u32
-    }
-    pub fn slice(&self) -> &[f32] {
-        unsafe { std::slice::from_raw_parts(self.phantom.as_ptr(), self.dims as usize) }
+    fn size_of(len: usize) -> usize {
+        if len > 65535 {
+            panic!("vector is too large");
+        }
+        (size_of::<Self>() + size_of::<f32>() * len).next_multiple_of(8)
     }
     pub fn as_borrowed(&self) -> VectBorrowed<'_, f32> {
-        unsafe { VectBorrowed::new_unchecked(self.slice()) }
-    }
-}
-
-impl Deref for PgvectorVectorHeader {
-    type Target = [f32];
-
-    fn deref(&self) -> &Self::Target {
-        self.slice()
+        unsafe {
+            VectBorrowed::new_unchecked(std::slice::from_raw_parts(
+                self.phantom.as_ptr(),
+                self.dims as usize,
+            ))
+        }
     }
 }
 
@@ -58,7 +41,7 @@ pub enum PgvectorVectorInput<'a> {
     Borrowed(&'a PgvectorVectorHeader),
 }
 
-impl<'a> PgvectorVectorInput<'a> {
+impl PgvectorVectorInput<'_> {
     unsafe fn new(p: NonNull<PgvectorVectorHeader>) -> Self {
         let q = unsafe {
             NonNull::new(pgrx::pg_sys::pg_detoast_datum(p.cast().as_ptr()).cast()).unwrap()
@@ -88,15 +71,12 @@ impl PgvectorVectorOutput {
     pub fn new(vector: VectBorrowed<'_, f32>) -> PgvectorVectorOutput {
         unsafe {
             let slice = vector.slice();
-            let layout = PgvectorVectorHeader::layout(slice.len());
-            let dims = vector.dims();
-            let internal_dims = dims as u16;
-            let ptr = pgrx::pg_sys::palloc(layout.size()) as *mut PgvectorVectorHeader;
-            ptr.cast::<u8>().add(layout.size() - 8).write_bytes(0, 8);
-            std::ptr::addr_of_mut!((*ptr).varlena)
-                .write(PgvectorVectorHeader::varlena(layout.size()));
-            std::ptr::addr_of_mut!((*ptr).magic).write(HEADER_MAGIC);
-            std::ptr::addr_of_mut!((*ptr).dims).write(internal_dims);
+            let size = PgvectorVectorHeader::size_of(slice.len());
+
+            let ptr = pgrx::pg_sys::palloc0(size) as *mut PgvectorVectorHeader;
+            (&raw mut (*ptr).varlena).write((size << 2) as u32);
+            (&raw mut (*ptr).dims).write(vector.dims() as _);
+            (&raw mut (*ptr).unused).write(0);
             std::ptr::copy_nonoverlapping(slice.as_ptr(), (*ptr).phantom.as_mut_ptr(), slice.len());
             PgvectorVectorOutput(NonNull::new(ptr).unwrap())
         }
@@ -124,7 +104,7 @@ impl Drop for PgvectorVectorOutput {
     }
 }
 
-impl<'a> FromDatum for PgvectorVectorInput<'a> {
+impl FromDatum for PgvectorVectorInput<'_> {
     unsafe fn from_polymorphic_datum(datum: Datum, is_null: bool, _typoid: Oid) -> Option<Self> {
         if is_null {
             None

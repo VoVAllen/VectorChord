@@ -12,9 +12,6 @@ fn _vchord_vector_sphere_l2_in(
         Ok(None) => pgrx::error!("Bad input: empty center at sphere"),
         Err(_) => unreachable!(),
     };
-    if lhs.dims() != center.dims() {
-        pgrx::error!("dimension is not matched");
-    }
     let radius: f32 = match rhs.get_by_index(NonZero::new(2).unwrap()) {
         Ok(Some(s)) => s,
         Ok(None) => pgrx::error!("Bad input: empty radius at sphere"),
@@ -22,6 +19,9 @@ fn _vchord_vector_sphere_l2_in(
     };
     let lhs = lhs.as_borrowed();
     let center = center.as_borrowed();
+    if lhs.dims() != center.dims() {
+        pgrx::error!("dimension is not matched");
+    }
     let d = VectBorrowed::operator_l2(lhs, center).to_f32().sqrt();
     d < radius
 }
@@ -36,9 +36,6 @@ fn _vchord_vector_sphere_ip_in(
         Ok(None) => pgrx::error!("Bad input: empty center at sphere"),
         Err(_) => unreachable!(),
     };
-    if lhs.dims() != center.dims() {
-        pgrx::error!("dimension is not matched");
-    }
     let radius: f32 = match rhs.get_by_index(NonZero::new(2).unwrap()) {
         Ok(Some(s)) => s,
         Ok(None) => pgrx::error!("Bad input: empty radius at sphere"),
@@ -46,6 +43,9 @@ fn _vchord_vector_sphere_ip_in(
     };
     let lhs = lhs.as_borrowed();
     let center = center.as_borrowed();
+    if lhs.dims() != center.dims() {
+        pgrx::error!("dimension is not matched");
+    }
     let d = VectBorrowed::operator_dot(lhs, center).to_f32();
     d < radius
 }
@@ -60,9 +60,6 @@ fn _vchord_vector_sphere_cosine_in(
         Ok(None) => pgrx::error!("Bad input: empty center at sphere"),
         Err(_) => unreachable!(),
     };
-    if lhs.dims() != center.dims() {
-        pgrx::error!("dimension is not matched");
-    }
     let radius: f32 = match rhs.get_by_index(NonZero::new(2).unwrap()) {
         Ok(Some(s)) => s,
         Ok(None) => pgrx::error!("Bad input: empty radius at sphere"),
@@ -70,6 +67,9 @@ fn _vchord_vector_sphere_cosine_in(
     };
     let lhs = lhs.as_borrowed();
     let center = center.as_borrowed();
+    if lhs.dims() != center.dims() {
+        pgrx::error!("dimension is not matched");
+    }
     let d = VectBorrowed::operator_cos(lhs, center).to_f32();
     d < radius
 }

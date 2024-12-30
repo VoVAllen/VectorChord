@@ -1,4 +1,5 @@
 use std::mem::{offset_of, MaybeUninit};
+use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 const _: () = assert!(
@@ -24,7 +25,7 @@ const _: () = assert!(align_of::<Page>() == pgrx::pg_sys::MAXIMUM_ALIGNOF as usi
 const _: () = assert!(size_of::<Page>() == pgrx::pg_sys::BLCKSZ as usize);
 
 impl Page {
-    pub fn init_mut(this: &mut MaybeUninit<Self>, tracking_freespace: bool) -> &mut Self {
+    pub fn init_mut(this: &mut MaybeUninit<Self>) -> &mut Self {
         unsafe {
             pgrx::pg_sys::PageInit(
                 this.as_mut_ptr() as pgrx::pg_sys::Page,
@@ -33,8 +34,7 @@ impl Page {
             );
             (&raw mut (*this.as_mut_ptr()).opaque).write(Opaque {
                 next: u32::MAX,
-                tracking_freespace,
-                fast_forward: u32::MAX,
+                skip: u32::MAX,
             });
         }
         let this = unsafe { MaybeUninit::assume_init_mut(this) };
@@ -46,6 +46,14 @@ impl Page {
         let this = unsafe { MaybeUninit::assume_init_mut(this) };
         assert_eq!(offset_of!(Self, opaque), this.header.pd_special as usize);
         this
+    }
+    #[allow(dead_code)]
+    pub fn clone_into_boxed(&self) -> Box<Self> {
+        let mut result = Box::new_uninit();
+        unsafe {
+            std::ptr::copy(self as *const Self, result.as_mut_ptr(), 1);
+            result.assume_init()
+        }
     }
     pub fn get_opaque(&self) -> &Opaque {
         &self.opaque
@@ -59,7 +67,7 @@ impl Page {
         assert!(self.header.pd_upper as usize <= size_of::<Self>());
         let lower = self.header.pd_lower as usize;
         let upper = self.header.pd_upper as usize;
-        assert!(lower < upper);
+        assert!(lower <= upper);
         ((lower - offset_of!(PageHeaderData, pd_linp)) / size_of::<ItemIdData>()) as u16
     }
     pub fn get(&self, i: u16) -> Option<&[u8]> {
@@ -91,6 +99,7 @@ impl Page {
             Some(std::slice::from_raw_parts(ptr, lp_len as _))
         }
     }
+    #[allow(unused)]
     pub fn get_mut(&mut self, i: u16) -> Option<&mut [u8]> {
         use pgrx::pg_sys::{ItemIdData, PageHeaderData};
         if i == 0 {
@@ -134,6 +143,22 @@ impl Page {
             pgrx::pg_sys::PageIndexTupleDeleteNoCompact((self as *mut Self).cast(), i);
         }
     }
+    pub fn reconstruct(&mut self, removes: &[u16]) {
+        let mut removes = removes.to_vec();
+        removes.sort();
+        removes.dedup();
+        let n = removes.len();
+        if n > 0 {
+            assert!(removes[n - 1] <= self.len());
+            unsafe {
+                pgrx::pg_sys::PageIndexMultiDelete(
+                    (self as *mut Self).cast(),
+                    removes.as_ptr().cast_mut(),
+                    removes.len() as _,
+                );
+            }
+        }
+    }
     pub fn freespace(&self) -> u16 {
         unsafe { pgrx::pg_sys::PageGetFreeSpace((self as *const Self).cast_mut().cast()) as u16 }
     }
@@ -142,8 +167,7 @@ impl Page {
 #[repr(C, align(8))]
 pub struct Opaque {
     pub next: u32,
-    pub tracking_freespace: bool,
-    pub fast_forward: u32,
+    pub skip: u32,
 }
 
 const _: () = assert!(align_of::<Opaque>() == pgrx::pg_sys::MAXIMUM_ALIGNOF as usize);
@@ -155,12 +179,17 @@ pub struct BufferReadGuard {
 }
 
 impl BufferReadGuard {
-    pub fn get(&self) -> &Page {
-        unsafe { self.page.as_ref() }
-    }
     #[allow(dead_code)]
     pub fn id(&self) -> u32 {
         self.id
+    }
+}
+
+impl Deref for BufferReadGuard {
+    type Target = Page;
+
+    fn deref(&self) -> &Page {
+        unsafe { self.page.as_ref() }
     }
 }
 
@@ -178,17 +207,26 @@ pub struct BufferWriteGuard {
     page: NonNull<Page>,
     state: *mut pgrx::pg_sys::GenericXLogState,
     id: u32,
+    tracking_freespace: bool,
 }
 
 impl BufferWriteGuard {
-    pub fn get(&self) -> &Page {
-        unsafe { self.page.as_ref() }
-    }
-    pub fn get_mut(&mut self) -> &mut Page {
-        unsafe { self.page.as_mut() }
-    }
     pub fn id(&self) -> u32 {
         self.id
+    }
+}
+
+impl Deref for BufferWriteGuard {
+    type Target = Page;
+
+    fn deref(&self) -> &Page {
+        unsafe { self.page.as_ref() }
+    }
+}
+
+impl DerefMut for BufferWriteGuard {
+    fn deref_mut(&mut self) -> &mut Page {
+        unsafe { self.page.as_mut() }
     }
 }
 
@@ -198,12 +236,8 @@ impl Drop for BufferWriteGuard {
             if std::thread::panicking() {
                 pgrx::pg_sys::GenericXLogAbort(self.state);
             } else {
-                if self.get().get_opaque().tracking_freespace {
-                    pgrx::pg_sys::RecordPageWithFreeSpace(
-                        self.raw,
-                        self.id,
-                        self.get().freespace() as _,
-                    );
+                if self.tracking_freespace {
+                    pgrx::pg_sys::RecordPageWithFreeSpace(self.raw, self.id, self.freespace() as _);
                     pgrx::pg_sys::FreeSpaceMapVacuumRange(self.raw, self.id, self.id + 1);
                 }
                 pgrx::pg_sys::GenericXLogFinish(self.state);
@@ -240,7 +274,7 @@ impl Relation {
             BufferReadGuard { buf, page, id }
         }
     }
-    pub fn write(&self, id: u32) -> BufferWriteGuard {
+    pub fn write(&self, id: u32, tracking_freespace: bool) -> BufferWriteGuard {
         assert!(id != u32::MAX, "no such page");
         unsafe {
             use pgrx::pg_sys::{
@@ -267,6 +301,7 @@ impl Relation {
                 page: page.cast(),
                 state,
                 id,
+                tracking_freespace,
             }
         }
     }
@@ -293,13 +328,14 @@ impl Relation {
                     .cast::<MaybeUninit<Page>>(),
             )
             .expect("failed to get page");
-            Page::init_mut(page.as_mut(), tracking_freespace);
+            Page::init_mut(page.as_mut());
             BufferWriteGuard {
                 raw: self.raw,
                 buf,
                 page: page.cast(),
                 state,
                 id: pgrx::pg_sys::BufferGetBlockNumber(buf),
+                tracking_freespace,
             }
         }
     }
@@ -310,20 +346,24 @@ impl Relation {
                 if id == u32::MAX {
                     return None;
                 }
-                let write = self.write(id);
-                assert!(write.get().get_opaque().tracking_freespace);
-                if write.get().freespace() < freespace as _ {
+                let write = self.write(id, true);
+                if write.freespace() < freespace as _ {
                     // the free space is recorded incorrectly
-                    pgrx::pg_sys::RecordPageWithFreeSpace(
-                        self.raw,
-                        id,
-                        write.get().freespace() as _,
-                    );
+                    pgrx::pg_sys::RecordPageWithFreeSpace(self.raw, id, write.freespace() as _);
                     pgrx::pg_sys::FreeSpaceMapVacuumRange(self.raw, id, id + 1);
                     continue;
                 }
                 return Some(write);
             }
+        }
+    }
+    #[allow(dead_code)]
+    pub fn len(&self) -> u32 {
+        unsafe {
+            pgrx::pg_sys::RelationGetNumberOfBlocksInFork(
+                self.raw,
+                pgrx::pg_sys::ForkNumber::MAIN_FORKNUM,
+            )
         }
     }
 }
