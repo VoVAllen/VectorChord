@@ -1,6 +1,6 @@
 <div align="center">
 <h1 align=center>VectorChord</h1>
-<h4 align=center>Effortlessly host 100 million 768-dimensional vectors (250GB+) on an AWS i4i.xlarge instance ($247/month), and scale to a billion vectors with the same schema.</h4>
+<h4 align=center>Ready for the Billion-Scale Era. Host 100M vectors on a single i4i.xlarge ($247/mo) and (scale seamlessly to 1B+)[https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql].</h4>
 </div>
 
 <div align=center>
@@ -21,7 +21,7 @@
 [![][license-2-shield]][license-2-link]
 </div>
 
-VectorChord (vchord) is a PostgreSQL extension designed for scalable, high-performance, and affordable vector similarity search.
+VectorChord (vchord) is a PostgreSQL extension engineered for scalable, high-performance, and cost-effective vector search.
 
 To efficiently store vectors while preserving search quality, VectorChord applies RaBitQ[^1] compression together with autonomous reranking. To scale as vector counts grow, users can enable hierarchical K-means and dimensionality reduction to control memory growth and index build time. As a result, VectorChord scales straightforwardly without changing the PostgreSQL deployment, schema, and query patterns.
 
@@ -40,7 +40,7 @@ VectorChord introduces remarkable enhancements over pgvecto.rs and pgvector:
 [^2]: Please check out our [blog post](https://blog.vectorchord.ai/vectorchord-store-400k-vectors-for-1-in-postgresql) for more details.
 [^3]: Please check out our [blog post](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql) for more details.
 
-**⚡ Accelerated Index Build**: Ultra-fast index build speed at scale, powered by hierarchical K-means and highly optimized disk operations[^4], making indexing and reindexing on NVMe SSDs no longer a limiting factor.
+**⚡ Accelerated Index Build**: Index 100 million vectors in just 20 minutes. Powered by hierarchical K-means and highly optimized disk operations, VectorChord eliminates the bottleneck of vector indexing on a single machine with limited hardware resources.
 
 [^4]: Please check out our [blog post](https://blog.vectorchord.ai/how-we-made-100m-vector-indexing-in-20-minutes-possible-on-postgresql#heading-hierarchical-k-means) for more technique details and [document](https://docs.vectorchord.ai/vectorchord/usage/partitioning-tuning.html#hierarchical-k-means) for usages.
 
@@ -49,6 +49,8 @@ VectorChord introduces remarkable enhancements over pgvecto.rs and pgvector:
 [^5]: Please check out our [blog post](https://blog.vectorchord.ai/how-we-made-100m-vector-indexing-in-20-minutes-possible-on-postgresql#heading-dimensionality-reduction) for more technique details and [document](https://docs.vectorchord.ai/vectorchord/usage/partitioning-tuning.html#reduce-sampling-factor) for usages.
 
 **🔌 Seamless Integration**: Fully compatible with pgvector data types and syntax while providing optimal defaults out of the box - no complex parameter tuning needed. Just drop in VectorChord for enhanced experience.
+
+**💾 Efficient Storage with Low-Bit Data type**: Drastically reduce storage costs with our [native 4-bit (RaBitQ4) and 8-bit (RaBitQ8) vector types](https://docs.vectorchord.ai/vectorchord/usage/quantization-types.html). Achieve massive space savings without compromising search quality—RaBitQ8 maintains high precision with <1% recall loss.
 
 ## Quick Start
 
@@ -101,6 +103,7 @@ For more usage, please read:
 
 - [Indexing](https://docs.vectorchord.ai/vectorchord/usage/indexing.html)
 - [Multi-Vector Retrieval](https://docs.vectorchord.ai/vectorchord/usage/indexing-with-maxsim-operators.html)
+- [Quantization Types](https://docs.vectorchord.ai/vectorchord/usage/quantization-types.html)
 - [Graph Index](https://docs.vectorchord.ai/vectorchord/usage/graph-index.html)
 - [Similarity Filter](https://docs.vectorchord.ai/vectorchord/usage/range-query.html)
 - [PostgreSQL Tuning](https://docs.vectorchord.ai/vectorchord/usage/performance-tuning.html)
